@@ -67,26 +67,23 @@ def test_extract_complete_multiple_blocks_last_terminator_wins():
 def test_watch_loop_ships_on_terminator_and_appends_receipts(tmp_path, monkeypatch):
     sent = []
     monkeypatch.setattr(pad.ot, "send_prompt", lambda pane, text, submit=True: sent.append((pane, text, submit)))
-    monkeypatch.setattr(pad.time, "sleep", lambda _s: None)
     f = tmp_path / "notes.md"
     f.write_text("", encoding="utf-8")
 
-    calls = {"f_stats": 0}
-    real_stat = Path.stat
+    # Simulate the user saving DURING the first poll cycle by writing from
+    # inside the mocked sleep — watch_loop calls time.sleep exactly once per
+    # iteration, always AFTER the offset was established. (Earlier versions
+    # patched Path.stat and counted calls; that broke across Python versions
+    # because Path.exists() routes through self.stat() on <=3.12 but not on
+    # 3.13+, shifting the count — the 2026-07-02 ubuntu-CI failure.)
+    state = {"wrote": False}
 
-    def scripted_stat(self, *args, **kwargs):
-        # Count ONLY stats of the watched file: a global Path.stat patch also
-        # sees unrelated paths (pytest/importlib internals), and on Linux one
-        # of those consumed a global call-count (the 2026-07-02 CI-only
-        # flake). Stat #1 of `f` is watch_loop's offset-init; stat #2 is the
-        # first poll — mutate the file BEFORE returning so the poll sees it.
-        if self == f:
-            calls["f_stats"] += 1
-            if calls["f_stats"] == 2 and not f.read_text().startswith("ship"):
-                f.write_text("ship me\n---\nhalf typed", encoding="utf-8")
-        return real_stat(self, *args, **kwargs)
+    def write_once_then_continue(_seconds):
+        if not state["wrote"]:
+            state["wrote"] = True
+            f.write_text("ship me\n---\nhalf typed", encoding="utf-8")
 
-    monkeypatch.setattr(Path, "stat", scripted_stat)
+    monkeypatch.setattr(pad.time, "sleep", write_once_then_continue)
     pad.watch_loop(f, ["p_9"], submit=True, poll=0, max_loops=3)
 
     assert sent == [("p_9", "ship me", True)]
