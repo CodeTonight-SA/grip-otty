@@ -71,14 +71,20 @@ def test_watch_loop_ships_on_terminator_and_appends_receipts(tmp_path, monkeypat
     f = tmp_path / "notes.md"
     f.write_text("", encoding="utf-8")
 
-    calls = {"n": 0}
+    calls = {"f_stats": 0}
     real_stat = Path.stat
 
-    def scripted_stat(self, **kw):
-        if self == f and calls["n"] == 1 and not f.read_text().startswith("ship"):
-            f.write_text("ship me\n---\nhalf typed", encoding="utf-8")
-        calls["n"] += 1
-        return real_stat(self, **kw)
+    def scripted_stat(self, *args, **kwargs):
+        # Count ONLY stats of the watched file: a global Path.stat patch also
+        # sees unrelated paths (pytest/importlib internals), and on Linux one
+        # of those consumed a global call-count (the 2026-07-02 CI-only
+        # flake). Stat #1 of `f` is watch_loop's offset-init; stat #2 is the
+        # first poll — mutate the file BEFORE returning so the poll sees it.
+        if self == f:
+            calls["f_stats"] += 1
+            if calls["f_stats"] == 2 and not f.read_text().startswith("ship"):
+                f.write_text("ship me\n---\nhalf typed", encoding="utf-8")
+        return real_stat(self, *args, **kwargs)
 
     monkeypatch.setattr(Path, "stat", scripted_stat)
     pad.watch_loop(f, ["p_9"], submit=True, poll=0, max_loops=3)
