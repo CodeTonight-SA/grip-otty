@@ -1,33 +1,57 @@
+<div align="center">
+
 # grip-otty
 
-Ship prompts from any text editor into any [Otty](https://otty.sh) pane
-running any AI agent harness — Claude Code, Codex, OpenCode, or anything
-else with a stdin. Python, stdlib-only, macOS (because Otty is macOS today).
+**Write prompts in your own editor. Ship them into any AI agent pane.**
 
-> **Unofficial.** This is a community toolkit, not affiliated with or endorsed
-> by Otty. It contains **no Otty code** — it drives Otty's public, documented
+[![CI](https://github.com/CodeTonight-SA/grip-otty/actions/workflows/ci.yml/badge.svg)](https://github.com/CodeTonight-SA/grip-otty/actions/workflows/ci.yml)
+[![License: MIT](https://img.shields.io/badge/license-MIT-1a1a1a.svg)](LICENSE)
+[![Python ≥3.9](https://img.shields.io/badge/python-%E2%89%A53.9-1a1a1a.svg)](pyproject.toml)
+[![Verified against](https://img.shields.io/badge/verified-Otty%201.1.0-E8490F.svg)](#field-notes-otty-110-verified-live)
+[![Dependencies](https://img.shields.io/badge/runtime%20deps-zero-1a1a1a.svg)](pyproject.toml)
+
+<img src="assets/otty-pad-demo.svg" width="860" alt="Animated illustration: a prompt typed in an editor pad, terminated with ---, saved, delivered into an Otty agent pane which starts working and badges done."/>
+
+</div>
+
+An unofficial toolkit for [Otty](https://otty.sh) — the native macOS terminal
+built for AI code agents. The pane can run **Claude Code, Codex, OpenCode, or
+anything with a stdin**: `otty-pad` delivers your prompt as keystrokes, so the
+harness doesn't matter. Python, **zero runtime dependencies**.
+
+> **Unofficial.** Not affiliated with or endorsed by Otty (an appmakes.io
+> product). Contains **no Otty code** — it drives Otty's public, documented
 > control CLI, and the optional hook wrapper execs Otty's *own* installed,
-> code-signed hook. Verified against **Otty 1.1.0** (2026-07-02); a newer Otty
-> may change behaviour (see [Field notes](#field-notes-otty-110-verified-live)).
+> code-signed hook. Verified against **Otty 1.1.0** (2026-07-02).
 
 ## Why
 
-Otty runs AI agent sessions as first-class panes. Once you have several
-running, two things become valuable:
+Otty runs AI agent sessions as first-class panes. Once several are running,
+two things become valuable:
 
-1. **Writing prompts in a real editor** instead of a terminal input box —
-   with history, multi-line editing, and your own keybindings.
-2. **Scripting the panes** — list them, send to them, read them back, badge
-   them — from plain Python.
+1. **Writing prompts in a real editor** — history, multi-line editing, your
+   own keybindings — instead of a terminal input box.
+2. **Scripting the panes** — list, send, read back, badge — from plain Python.
 
 `otty-pad` is #1. `otty_pad.transport` is #2.
+
+## How it works
+
+```mermaid
+flowchart LR
+    E["✍ your editor<br/>(vim · VS Code · Obsidian · any)"] -->|"save — blocks end with ---"| P["otty-pad"]
+    P -->|"pane send-keys<br/>(bracketed paste + Enter)"| O["Otty control CLI<br/>runtime socket"]
+    O --> A["★ agent pane<br/>Claude Code"]
+    O --> B["★ agent pane<br/>Codex"]
+    O --> C["★ agent pane<br/>OpenCode"]
+    A -.->|"tab badges: working / done / waiting"| O
+```
 
 ## Install
 
 ```bash
-pipx install grip-otty          # or: uv tool install grip-otty
-# or straight from git:
 pipx install git+https://github.com/CodeTonight-SA/grip-otty
+# or: uv tool install git+https://github.com/CodeTonight-SA/grip-otty
 ```
 
 ## Enable prompt-sending (one-time, deliberate)
@@ -53,8 +77,9 @@ otty-pad --all --send "run the tests"   # broadcast to every agent pane at once
 
 Pad file rules: `#>` lines are chrome/receipts and never send; a line that is
 exactly `---` separates prompts. In watch mode **only** `---`-terminated
-blocks ship — an autosave of a half-typed thought never sends. Prompt
-journals live in `$XDG_STATE_HOME/otty-pad` (default `~/.local/state/otty-pad`).
+blocks ship — **an autosave of a half-typed thought never sends** (that
+property is a test). Prompt journals live in `$XDG_STATE_HOME/otty-pad`
+(default `~/.local/state/otty-pad`).
 
 ## The transport API
 
@@ -71,7 +96,8 @@ new_id = ot.split_pane(direction="right", title="scratch")      # returns the NE
 ```
 
 Everything goes through one `_run()` boundary with an injectable runner —
-the whole package tests without Otty installed (`pytest`, 38 tests).
+the whole package tests without Otty installed (`pytest`, 39 tests, CI runs
+them on macOS and Linux).
 
 ## Field notes (Otty 1.1.0, verified live)
 
@@ -90,15 +116,35 @@ the whole package tests without Otty installed (`pytest`, 38 tests).
 If your team commits Claude Code's `settings.json` and only some machines
 have Otty, see [`examples/gated-hooks/`](examples/gated-hooks/) — a tiny
 wrapper that keeps Otty's tab-badge hooks alive where Otty exists and makes
-them a silent ~2 ms no-op everywhere else.
+them a silent ~2 ms no-op everywhere else. When Otty ships its Windows build,
+the same committed entries simply come alive.
+
+## Known limitations (read before adopting)
+
+- **macOS only**, because Otty is macOS-only today (Windows/Linux are on
+  Otty's waitlist). The transport fails soft everywhere else.
+- **Version-welded to Otty 1.1.0 quirks.** The split-id discovery dance and
+  the title-based agent heuristic are workarounds for 1.1.0 behaviour; a new
+  Otty release can break or obsolete them (we've documented exactly which
+  ones in the field notes above).
+- **Agent detection is a heuristic**, not a contract. A pane titled
+  `vim claude-notes.md` will be mis-starred. Target by pane id when precision
+  matters.
+- **Send is fire-and-forget.** `send_prompt` confirms Otty accepted the keys,
+  not that the harness understood them — use `capture()` to verify when it
+  matters.
+- **Watch mode tracks one file per process** and reads appends only; if you
+  rewrite the file's history above the watermark, restart the watcher.
+- **Not on PyPI yet** — install from git. It will be published if anyone
+  besides us actually uses it (that's an honest maybe).
 
 ## Status & maintenance
 
 Version-pinned honesty: built and verified against **Otty 1.1.0** only. Otty
 is a fast-moving commercial product; if a future release supersedes this
-toolkit natively, this repo will be archived rather than left to rot.
+toolkit natively, this repo will be **archived rather than left to rot**.
 Issues and PRs welcome until then.
 
 ## License
 
-MIT © 2026 CodeTonight SA
+MIT © 2026 [CodeTonight SA](https://codetonight.co.za)
