@@ -60,6 +60,13 @@ test("splitPromptCapsules uses exact-line separators", () => {
   assert.equal(capsules[2].text, "שלום Claude");
 });
 
+test("splitPromptCapsules ignores separators inside fenced code", () => {
+  const capsules = splitPromptCapsules("alpha\n```\n---\n```\n---\nbeta");
+  assert.equal(capsules.length, 2);
+  assert.equal(capsules[0].text, "alpha\n```\n---\n```");
+  assert.equal(capsules[1].text, "beta");
+});
+
 test("renderMarkdown escapes HTML and renders basic markdown", () => {
   const html = renderMarkdown("# Hello <x>\n- **bold**\n`code`");
   assert.match(html, /<h1>Hello &lt;x&gt;<\/h1>/);

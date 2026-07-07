@@ -71,6 +71,7 @@ export function splitPromptCapsules(markdown: string): PromptCapsule[] {
   const capsules: PromptCapsule[] = [];
   let current: string[] = [];
   let startLine = 1;
+  let inFence = false;
 
   const flush = (endLine: number) => {
     const text = current.join("\n").trim();
@@ -82,7 +83,10 @@ export function splitPromptCapsules(markdown: string): PromptCapsule[] {
   };
 
   lines.forEach((line, index) => {
-    if (line.trim() === "---") {
+    if (line.trim().startsWith("```")) {
+      inFence = !inFence;
+      current.push(line);
+    } else if (!inFence && line.trim() === "---") {
       flush(index);
     } else {
       current.push(line);

@@ -160,8 +160,7 @@ function renderPreview() {
   sendButton.disabled = !canSend(studioState());
   outline.replaceChildren(
     ...parseMarkdownOutline(prompt).map((heading) => {
-      const item = el("li", "", `L${heading.line} · ${heading.text}`);
-      item.style.setProperty("--depth", String(heading.level));
+      const item = el("li", `depth-${heading.level}`, `L${heading.line} · ${heading.text}`);
       return item;
     }),
   );

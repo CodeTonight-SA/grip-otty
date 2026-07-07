@@ -1,8 +1,7 @@
 use serde::{Deserialize, Serialize};
 use std::path::Path;
-use std::process::{Command, Stdio};
+use std::process::{Child, Command, Output, Stdio};
 use std::sync::mpsc;
-use std::thread;
 use std::time::Duration;
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -73,8 +72,27 @@ fn resolve_otty_bin() -> Result<String, String> {
     candidates.extend(path_candidates("otty"));
     candidates
         .into_iter()
-        .find(|path| !path.trim().is_empty() && Path::new(path).is_file())
+        .find(|path| is_executable_file(path))
         .ok_or_else(|| "Otty CLI unavailable: no trusted otty binary found".to_string())
+}
+
+fn is_executable_file(path: &str) -> bool {
+    if path.trim().is_empty() {
+        return false;
+    }
+    let path = Path::new(path);
+    if !path.is_file() {
+        return false;
+    }
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        return path.metadata().map(|m| m.permissions().mode() & 0o111 != 0).unwrap_or(false);
+    }
+    #[cfg(not(unix))]
+    {
+        true
+    }
 }
 
 fn path_candidates(binary: &str) -> Vec<String> {
@@ -87,14 +105,44 @@ fn path_candidates(binary: &str) -> Vec<String> {
         .unwrap_or_default()
 }
 
-fn run_with_timeout(mut command: Command, timeout: Duration) -> Result<std::process::Output, String> {
+fn run_with_timeout(mut command: Command, timeout: Duration) -> Result<Output, String> {
+    let mut child = command.spawn().map_err(|err| format!("Otty CLI failed to start: {err}"))?;
     let (tx, rx) = mpsc::channel();
-    thread::spawn(move || {
-        let result = command.output().map_err(|err| format!("Otty CLI failed to start: {err}"));
+    let stdout = child.stdout.take();
+    let stderr = child.stderr.take();
+    let pid = child.id();
+    std::thread::spawn(move || {
+        let result = wait_with_output(child, stdout, stderr);
         let _ = tx.send(result);
     });
-    rx.recv_timeout(timeout)
-        .map_err(|_| "Otty CLI timed out".to_string())?
+    match rx.recv_timeout(timeout) {
+        Ok(result) => result,
+        Err(_) => {
+            kill_process(pid);
+            Err("Otty CLI timed out".to_string())
+        }
+    }
+}
+
+fn wait_with_output(mut child: Child, stdout: Option<std::process::ChildStdout>, stderr: Option<std::process::ChildStderr>) -> Result<Output, String> {
+    use std::io::Read;
+    let status = child.wait().map_err(|err| format!("Otty CLI wait failed: {err}"))?;
+    let mut out = Vec::new();
+    let mut err = Vec::new();
+    if let Some(mut stdout) = stdout {
+        stdout.read_to_end(&mut out).map_err(|e| format!("Otty stdout read failed: {e}"))?;
+    }
+    if let Some(mut stderr) = stderr {
+        stderr.read_to_end(&mut err).map_err(|e| format!("Otty stderr read failed: {e}"))?;
+    }
+    Ok(Output { status, stdout: out, stderr: err })
+}
+
+fn kill_process(pid: u32) {
+    #[cfg(unix)]
+    {
+        let _ = Command::new("kill").args(["-TERM", &pid.to_string()]).status();
+    }
 }
 
 fn send_args<'a>(pane_id: &'a str, prompt: &'a str, submit: bool) -> Result<Vec<&'a str>, String> {
@@ -128,9 +176,19 @@ fn pane_list() -> Result<Vec<Pane>, String> {
 
 #[tauri::command]
 fn send_prompt(pane_id: String, prompt: String, submit: bool) -> Result<(), String> {
+    ensure_send_keys_enabled()?;
     let pane_id = pane_id.trim();
     let args = send_args(pane_id, &prompt, submit)?;
     run_otty(&args).map(|_| ())
+}
+
+fn ensure_send_keys_enabled() -> Result<(), String> {
+    let value = run_otty(&["config", "get", "ipc-allow-send-keys"])?;
+    if value.to_lowercase().contains("true") {
+        Ok(())
+    } else {
+        Err("Otty send-keys is disabled; run `otty config set ipc-allow-send-keys true` and `otty config reload`".into())
+    }
 }
 
 #[tauri::command]
@@ -174,7 +232,7 @@ pub fn run() {
 
 #[cfg(test)]
 mod tests {
-    use super::{looks_like_agent, path_candidates, send_args};
+    use super::{is_executable_file, looks_like_agent, path_candidates, send_args};
 
     #[test]
     fn agent_detection_ignores_editor_buffers() {
@@ -211,5 +269,10 @@ mod tests {
     fn path_candidates_include_binary_name() {
         let candidates = path_candidates("otty-test-bin");
         assert!(candidates.iter().all(|candidate| candidate.ends_with("otty-test-bin")));
+    }
+
+    #[test]
+    fn executable_check_rejects_missing_path() {
+        assert!(!is_executable_file("/definitely/not/a/real/otty"));
     }
 }

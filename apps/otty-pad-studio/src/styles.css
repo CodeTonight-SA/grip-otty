@@ -238,9 +238,14 @@ dd {
 }
 
 .outline li {
-  margin-left: calc((var(--depth) - 1) * 0.8rem);
   color: #ffe7b0;
 }
+
+.outline .depth-2 { margin-left: 0.8rem; }
+.outline .depth-3 { margin-left: 1.6rem; }
+.outline .depth-4 { margin-left: 2.4rem; }
+.outline .depth-5 { margin-left: 3.2rem; }
+.outline .depth-6 { margin-left: 4rem; }
 
 .capsule {
   border-left: 3px solid #87ffb4;
