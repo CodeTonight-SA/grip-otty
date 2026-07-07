@@ -55,7 +55,7 @@ app.innerHTML = `
       </header>
       <textarea id="prompt" spellcheck="true" aria-label="Prompt Markdown"></textarea>
       <div class="send-row">
-        <label class="toggle"><input id="submit" type="checkbox" checked /> Press Enter after paste</label>
+        <label class="toggle" title="When checked, send the prompt then press Enter automatically"><input id="submit" type="checkbox" checked /> Auto-send</label>
         <button id="copy" type="button">Copy Markdown</button>
         <button id="clear" type="button">Clear draft</button>
         <button id="send" type="button">Send to selected pane</button>

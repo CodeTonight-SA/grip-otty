@@ -261,9 +261,9 @@ def send_prompt(
     if bracketed:
         argv.append("--bracketed-paste")
     argv += ["--", text]
-    if submit:
-        argv.append("key:Enter")
     _run(argv, runner=runner)
+    if submit:
+        _run(["pane", "send-keys", "--pane", pane_id, "--", "key:Enter"], runner=runner)
 
 
 def capture(
