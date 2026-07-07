@@ -168,9 +168,20 @@ def test_agent_pane_heuristic():
         {"id": "d", "process": "?"},
         {"id": "e", "process": ""},
         {"id": "f", "process": "vim notes.md"},
+        {"id": "g", "process": "vim claude-notes.md"},
     ]
     got = [p["id"] for p in ot.agent_panes(panes)]
     assert got == ["a", "b", "c"]
+
+
+def test_agent_pane_prefers_structured_metadata():
+    panes = [
+        {"id": "a", "process": "vim claude-notes.md", "agent": "claude"},
+        {"id": "b", "process": "plain shell", "harness": "opencode"},
+        {"id": "c", "process": "vim claude-notes.md"},
+    ]
+    got = [p["id"] for p in ot.agent_panes(panes)]
+    assert got == ["a", "b"]
 
 
 # ---------------------------------------------------------------- split
@@ -186,6 +197,32 @@ def test_split_discovers_new_pane_id(fake_bin):
     assert split_argv[3:6] == ["pane", "split", "--direction"]
     assert "--no-focus" in split_argv  # default: never steal focus
     assert "--title" in split_argv
+
+
+def test_split_prefers_id_from_response(fake_bin):
+    rec = Recorder(outcomes=[[{"id": "p_a"}], {"id": "p_new"}])
+    new_id = ot.split_pane(runner=rec, discover_delay=0, discover_tries=1)
+    assert new_id == "p_new"
+    assert len(rec.calls) == 2  # before list + split; no fallback polling needed
+
+
+def test_split_extracts_nested_pane_id(fake_bin):
+    rec = Recorder(outcomes=[[{"id": "p_a"}], {"pane": {"pane_id": "p_nested"}}])
+    assert ot.split_pane(runner=rec, discover_delay=0, discover_tries=1) == "p_nested"
+
+
+def test_split_ignores_existing_or_non_pane_response_id(fake_bin):
+    rec = Recorder(outcomes=[
+        [{"id": "p_a"}],
+        {"id": "p_a", "tab_id": "t_new"},
+        [{"id": "p_a"}, {"id": "p_b"}],
+    ])
+    assert ot.split_pane(runner=rec, discover_delay=0, discover_tries=1) == "p_b"
+
+
+def test_split_accepts_future_non_prefixed_pane_id(fake_bin):
+    rec = Recorder(outcomes=[[{"id": "p_a"}], {"pane_id": "pane-123"}])
+    assert ot.split_pane(runner=rec, discover_delay=0, discover_tries=1) == "pane-123"
 
 
 def test_split_returns_none_when_no_new_pane(fake_bin):

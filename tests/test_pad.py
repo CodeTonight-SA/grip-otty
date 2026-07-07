@@ -64,6 +64,17 @@ def test_extract_complete_multiple_blocks_last_terminator_wins():
     assert pending[consumed:] == "tail"
 
 
+def test_rtl_and_mixed_direction_prompts_preserve_logical_order():
+    hebrew = "שלום עולם"
+    arabic = "مرحبا بالعالم"
+    mixed = "run pytest ואז תקן failing test ثم اشرح السبب"
+    text = f"{hebrew}\n---\n{arabic}\n---\n{mixed}\n---\n"
+    pending = text + "unfinished"
+    blocks, consumed = pad.extract_complete(pending)
+    assert blocks == [hebrew, arabic, mixed]
+    assert pending[consumed:] == "unfinished"
+
+
 def test_watch_loop_ships_on_terminator_and_appends_receipts(tmp_path, monkeypatch):
     sent = []
     monkeypatch.setattr(pad.ot, "send_prompt", lambda pane, text, submit=True: sent.append((pane, text, submit)))
@@ -98,6 +109,13 @@ def test_receipt_shape():
     assert "p_1" in line and "chars" in line
 
 
+def test_plain_receipt_shape():
+    line = pad.receipt("p_1", "hello", plain=True)
+    assert line.startswith("#> OK ")
+    assert " -> p_1" in line
+    assert line.isascii()
+
+
 # ---------------------------------------------------------------- dispatch
 
 def test_send_blocks_fans_out_targets(monkeypatch):
@@ -107,6 +125,14 @@ def test_send_blocks_fans_out_targets(monkeypatch):
     assert sent == [("p_1", "alpha", False), ("p_2", "alpha", False),
                     ("p_1", "beta", False), ("p_2", "beta", False)]
     assert len(receipts) == 4
+
+
+def test_send_blocks_preserves_rtl_payload(monkeypatch):
+    sent = []
+    text = "שלום Claude ثم run tests"
+    monkeypatch.setattr(pad.ot, "send_prompt", lambda pane, prompt, submit=True: sent.append((pane, prompt, submit)))
+    pad.send_blocks(["p_1"], [text], submit=True)
+    assert sent == [("p_1", text, True)]
 
 
 def test_resolve_editor_honours_multiword(monkeypatch):
@@ -147,3 +173,12 @@ def test_main_all_requires_agent_panes(monkeypatch, capsys):
     rc = pad.main(["--send", "x", "--all"])
     assert rc == 1
     assert "no agent panes" in capsys.readouterr().err
+
+
+def test_main_info_works_without_otty(monkeypatch, capsys):
+    monkeypatch.setattr(pad.ot, "info", lambda: pad.ot.OttyInfo(False, False, None, None))
+    rc = pad.main(["--info", "--plain"])
+    assert rc == 0
+    out = capsys.readouterr().out
+    assert "available: False" in out
+    assert "editor -> otty-pad -> pane send-keys" in out

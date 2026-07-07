@@ -13,6 +13,8 @@ Usage
   otty-pad --watch notes.md    journal mode: a line `---` ships the block above
   otty-pad --split             open the pad in its own Otty split pane
   otty-pad --list              list panes (agents starred) and exit
+  otty-pad --info              fail-soft Otty status and integration hints
+  otty-pad --plain             ASCII output for screen readers/plain terminals
   otty-pad --no-submit         type the prompt but do not press Enter
 
 Pad file protocol (both modes)
@@ -47,6 +49,17 @@ from . import transport as ot
 
 CHROME = "#>"
 SEP = "---"
+
+
+def _glyphs(plain: bool) -> dict[str, str]:
+    return {
+        "agent": "*" if plain else "★",
+        "send": "->" if plain else "→",
+        "receipt": "OK" if plain else "✓",
+        "keyboard": "otty-pad" if plain else "⌨ otty-pad",
+        "watch": "watching" if plain else "\U0001f441 watching",
+        "dot": "." if plain else "·",
+    }
 
 
 def _state_dir() -> Path:
@@ -98,10 +111,11 @@ def extract_complete(pending: str) -> "tuple[list[str], int]":
     return parse_blocks(pending[:last_sep_end]), last_sep_end
 
 
-def receipt(pane_id: str, block: str, when: "datetime | None" = None) -> str:
+def receipt(pane_id: str, block: str, when: "datetime | None" = None, *, plain: bool = False) -> str:
     stamp = (when or datetime.now()).strftime("%H:%M:%S")
     preview = " ".join(block.split())[:56]
-    return f"{CHROME} ✓ {stamp} → {pane_id}  {len(block)} chars · {preview}"
+    g = _glyphs(plain)
+    return f"{CHROME} {g['receipt']} {stamp} {g['send']} {pane_id}  {len(block)} chars {g['dot']} {preview}"
 
 
 def resolve_editor() -> "list[str]":
@@ -117,7 +131,7 @@ def _pane_label(pane: dict) -> str:
     return f"{pane.get('id')}  {title[:64]}"
 
 
-def pick_target() -> str:
+def pick_target(*, plain: bool = False) -> str:
     panes = ot.pane_list()
     agents = ot.agent_panes(panes)
     others = [p for p in panes if p not in agents]
@@ -125,8 +139,9 @@ def pick_target() -> str:
     if not ordered:
         raise ot.OttyError("no Otty panes found — is the Otty app running?")
     print("\n  otty-pad · pick a target pane\n")
+    g = _glyphs(plain)
     for i, pane in enumerate(ordered, 1):
-        star = "★" if pane in agents else " "
+        star = g["agent"] if pane in agents else " "
         print(f"   {i:>2} {star} {_pane_label(pane)}")
     choice = input("\n  target [1]: ").strip() or "1"
     try:
@@ -144,17 +159,18 @@ def resolve_targets(args) -> "list[str]":
         return [str(p["id"]) for p in agents]
     if args.target:
         return [args.target]
-    return [pick_target()]
+    return [pick_target(plain=getattr(args, "plain", False))]
 
 
-def send_blocks(targets: "list[str]", blocks: "list[str]", *, submit: bool) -> "list[str]":
+def send_blocks(targets: "list[str]", blocks: "list[str]", *, submit: bool, plain: bool = False) -> "list[str]":
     # Broadcast is an inherent cartesian product: every block to every target
     # (both lists are tiny — panes on one screen, prompts in one save).
     receipts = []
+    g = _glyphs(plain)
     for block, pane_id in itertools.product(blocks, targets):
         ot.send_prompt(pane_id, block, submit=submit)
-        receipts.append(receipt(pane_id, block))
-        print(f"  → {len(block)} chars → {pane_id}")
+        receipts.append(receipt(pane_id, block, plain=plain))
+        print(f"  {g['send']} {len(block)} chars {g['send']} {pane_id}")
     return receipts
 
 
@@ -168,25 +184,27 @@ def _pad_template(target_desc: str) -> str:
     )
 
 
-def editor_loop(targets: "list[str]", *, submit: bool) -> int:
+def editor_loop(targets: "list[str]", *, submit: bool, plain: bool = False) -> int:
     PAD_DIR.mkdir(parents=True, exist_ok=True)
     pad = PAD_DIR / f"pad-{datetime.now().strftime('%Y%m%d-%H%M%S')}.md"
     target_desc = ", ".join(targets)
     journal: "list[str]" = []
     pad.write_text(_pad_template(target_desc), encoding="utf-8")
     editor = resolve_editor()
-    print(f"\n  ⌨ otty-pad → {target_desc}\n  pad file: {pad}\n")
+    g = _glyphs(plain)
+    print(f"\n  {g['keyboard']} {g['send']} {target_desc}\n  pad file: {pad}\n")
     while True:
         subprocess.call(editor + [str(pad)])
         blocks = parse_blocks(pad.read_text(encoding="utf-8"))
         if blocks:
-            journal += send_blocks(targets, blocks, submit=submit)
+            journal += send_blocks(targets, blocks, submit=submit, plain=plain)
         else:
             print("  (nothing to send)")
         body = _pad_template(target_desc) + "".join(line + "\n" for line in journal) + "\n"
         pad.write_text(body, encoding="utf-8")
         try:
-            answer = input("  Enter = next prompt · q = quit: ").strip().lower()
+            separator = "." if plain else "·"
+            answer = input(f"  Enter = next prompt {separator} q = quit: ").strip().lower()
         except (EOFError, KeyboardInterrupt):
             answer = "q"
         if answer == "q":
@@ -197,13 +215,15 @@ def editor_loop(targets: "list[str]", *, submit: bool) -> int:
 # ------------------------------------------------------------- watch mode
 
 def watch_loop(path: Path, targets: "list[str]", *, submit: bool,
-               poll: float = 0.5, max_loops: "int | None" = None) -> int:
+               poll: float = 0.5, max_loops: "int | None" = None,
+               plain: bool = False) -> int:
     """Tail a user-owned file; ship `---`-terminated blocks as they appear."""
     if not path.exists():
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text(_pad_template(", ".join(targets)), encoding="utf-8")
     offset = path.stat().st_size
-    print(f"\n  \U0001f441 watching {path} → {', '.join(targets)}"
+    g = _glyphs(plain)
+    print(f"\n  {g['watch']} {path} {g['send']} {', '.join(targets)}"
           f"\n  end a prompt with a `---` line + save to send · Ctrl-C to stop\n")
     loops = 0
     try:
@@ -221,7 +241,7 @@ def watch_loop(path: Path, targets: "list[str]", *, submit: bool,
             blocks, consumed = extract_complete(pending)
             if not blocks:
                 continue
-            receipts = send_blocks(targets, blocks, submit=submit)
+            receipts = send_blocks(targets, blocks, submit=submit, plain=plain)
             offset += consumed
             with path.open("a", encoding="utf-8") as fh:
                 fh.write("".join(line + "\n" for line in receipts))
@@ -233,12 +253,31 @@ def watch_loop(path: Path, targets: "list[str]", *, submit: bool,
 
 # ------------------------------------------------------------- entrypoints
 
-def cmd_list() -> int:
+def cmd_list(*, plain: bool = False) -> int:
     panes = ot.pane_list()
     agents = {p.get("id") for p in ot.agent_panes(panes)}
+    g = _glyphs(plain)
     for pane in panes:
-        star = "★" if pane.get("id") in agents else " "
+        star = g["agent"] if pane.get("id") in agents else " "
         print(f" {star} {_pane_label(pane)}")
+    return 0
+
+
+def cmd_info(*, plain: bool = False) -> int:
+    info = ot.info()
+    g = _glyphs(plain)
+    print("otty-pad info")
+    print(f"  available: {info.available}")
+    print(f"  inside_otty: {info.inside}")
+    print(f"  binary: {info.binary or '(not found)'}")
+    print(f"  version: {info.version or '(unknown)'}")
+    if info.available:
+        print(f"  send_keys_enabled: {ot.send_keys_enabled()}")
+        print(f"  agent_detection: structured metadata if present, otherwise title heuristic")
+        print(f"  otty_1_2_2_notes: background --pane targeting improved; AppleScript automation is documented by Otty, not wrapped here yet")
+    else:
+        print("  status: Otty not found; commands fail soft on this machine")
+    print(f"  prompt_flow: editor {g['send']} otty-pad {g['send']} pane send-keys")
     return 0
 
 
@@ -268,8 +307,13 @@ def main(argv: "list[str] | None" = None) -> int:
     parser.add_argument("--direction", default="right", choices=["left", "right", "top", "bottom"])
     parser.add_argument("--size", type=int, default=35, help="split size %% (with --split)")
     parser.add_argument("--list", action="store_true", help="list panes and exit")
+    parser.add_argument("--info", action="store_true", help="show Otty availability and integration notes")
+    parser.add_argument("--plain", action="store_true", help="ASCII output for screen readers/plain terminals")
     parser.add_argument("--no-submit", action="store_true", help="type but do not press Enter")
     args = parser.parse_args(argv)
+
+    if args.info:
+        return cmd_info(plain=args.plain)
 
     if not ot.is_available():
         print("otty-pad: Otty is not installed on this machine (macOS app + CLI "
@@ -280,16 +324,16 @@ def main(argv: "list[str] | None" = None) -> int:
     submit = not args.no_submit
     try:
         if args.list:
-            return cmd_list()
+            return cmd_list(plain=args.plain)
         if args.split:
             return cmd_split(args)
         targets = resolve_targets(args)
         if args.send:
-            send_blocks(targets, [args.send], submit=submit)
+            send_blocks(targets, [args.send], submit=submit, plain=args.plain)
             return 0
         if args.watch:
-            return watch_loop(Path(args.watch).expanduser(), targets, submit=submit)
-        return editor_loop(targets, submit=submit)
+            return watch_loop(Path(args.watch).expanduser(), targets, submit=submit, plain=args.plain)
+        return editor_loop(targets, submit=submit, plain=args.plain)
     except ot.OttyNotAvailable as exc:
         print(f"otty-pad: {exc}", file=sys.stderr)
         return 3
