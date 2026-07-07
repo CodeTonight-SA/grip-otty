@@ -9,15 +9,20 @@ Codex, OpenCode, anything with a stdin).
 Every Otty interaction in this package goes through this module: a single,
 mockable surface with plain-language errors and fail-soft detection.
 
-Verified live on Otty 1.1.0 (2026-07-02):
+Verified live on Otty 1.1.0 (2026-07-02), then rechecked on Otty 1.2.2
+(2026-07-07):
 - `otty pane send-keys --pane <id> -- "text" key:Enter` delivers + submits
   (e2e: a zsh pane echoed and executed the sent line).
 - send-keys is DISABLED by default; needs `ipc-allow-send-keys = true` AND
   `otty config reload` for a running app to honour it.
-- `otty pane split` does NOT return the new pane id -> discover via
-  before/after `pane list` diff (encoded in :func:`split_pane`).
+- `otty pane split` historically did not return the new pane id -> discover
+  via before/after `pane list` diff. :func:`split_pane` now prefers any id in
+  the command response and keeps the diff fallback for older builds.
 - `pane capture --lines N` returns the BOTTOM N rows; full-screen capture is
   the reliable verification read.
+- `pane list --json` on the observed 1.2.2 install still had no structured
+  agent field; :func:`agent_panes` prefers one if a future build adds it and
+  otherwise falls back to title heuristics.
 - Detection markers inside an Otty shell: TERM_PROGRAM=otty, OTTY_BIN_DIR.
 
 Absent Otty (machines without the app — Windows/Linux today — or CI):
@@ -62,10 +67,10 @@ __all__ = [
 _APP_DIR = Path(os.environ.get("OTTY_APP_DIR", "/Applications/Otty.app"))
 _BUNDLE_CLI = _APP_DIR / "Contents" / "MacOS" / "otty-cli"
 
-# Badge kinds accepted by `otty pane badge --kind` (Otty 1.1.0 --help).
+# Badge kinds accepted by `otty pane badge --kind` (Otty 1.1.0/1.2.2 --help).
 BADGE_KINDS = ("running", "completed", "finished", "unread", "error", "awaiting-input")
 
-# Agent kinds accepted by `otty state:<kind>` (Otty 1.1.0 --help).
+# Agent kinds accepted by `otty state:<kind>` (Otty 1.1.0/1.2.2 --help).
 AGENT_KINDS = ("claude", "codex", "opencode")
 
 
@@ -173,11 +178,29 @@ def pane_list(*, runner: Runner = subprocess.run) -> "list[dict]":
 # plus the markers seen on finished/recording sessions.
 _AGENT_TITLE_MARKS = ("✳", "⏺", "●")
 _AGENT_WORDS = ("claude", "codex", "opencode")
+_STRUCTURED_AGENT_KEYS = ("agent", "agent_kind", "agentKind", "harness")
+_NON_AGENT_PROCESS_PREFIXES = ("vim ", "nvim ", "vi ", "emacs ", "nano ", "code ")
+
+
+def _structured_agent_kind(pane: dict) -> Optional[str]:
+    """Return a structured agent kind if Otty exposes one in pane JSON.
+
+    Otty 1.2.2 on the author's machine did not expose this yet, but upstream
+    has agent-session awareness in the UI. Prefer explicit metadata the moment
+    it appears; keep title heuristics as compatibility fallback.
+    """
+    for key in _STRUCTURED_AGENT_KEYS:
+        value = pane.get(key)
+        if isinstance(value, str) and value.lower() in _AGENT_WORDS:
+            return value.lower()
+    return None
 
 
 def _looks_like_agent(process_title: str) -> bool:
     title = (process_title or "").strip()
     if not title:
+        return False
+    if title.lower().startswith(_NON_AGENT_PROCESS_PREFIXES):
         return False
     first = title[0]
     if 0x2800 <= ord(first) <= 0x28FF or first in _AGENT_TITLE_MARKS:
@@ -189,12 +212,30 @@ def _looks_like_agent(process_title: str) -> bool:
 def agent_panes(panes: "Optional[list[dict]]" = None, *, runner: Runner = subprocess.run) -> "list[dict]":
     """Panes whose process title looks like a live agent session.
 
-    Heuristic on the title; prefer a structured field the moment Otty adds
-    one to `pane list --json`.
+    Structured pane metadata wins if present; otherwise fall back to the title
+    heuristic used by Otty 1.1.0/observed 1.2.2 builds.
     """
     if panes is None:
         panes = pane_list(runner=runner)
-    return [p for p in panes if _looks_like_agent(str(p.get("process") or ""))]
+    return [
+        p for p in panes
+        if _structured_agent_kind(p) or _looks_like_agent(str(p.get("process") or ""))
+    ]
+
+
+def _pane_id_from_split_response(data: object, before: "set[object]") -> Optional[str]:
+    """Best-effort pane-id extraction from `pane split` JSON output."""
+    if isinstance(data, dict):
+        for key in ("id", "pane_id", "paneId"):
+            value = data.get(key)
+            if isinstance(value, str):
+                pane_id = value.strip()
+                if pane_id not in before and not pane_id.startswith(("t_", "w_")):
+                    return pane_id
+        pane = data.get("pane")
+        if isinstance(pane, dict):
+            return _pane_id_from_split_response(pane, before)
+    return None
 
 
 def send_prompt(
@@ -276,7 +317,10 @@ def split_pane(
         argv += ["--size", str(size)]
     if not focus:
         argv.append("--no-focus")
-    _run(argv, runner=runner)
+    split_data = _run(argv, runner=runner)
+    response_id = _pane_id_from_split_response(split_data, before)
+    if response_id:
+        return response_id
     for _ in range(max(1, discover_tries)):
         time.sleep(discover_delay)
         new = [p.get("id") for p in pane_list(runner=runner) if p.get("id") not in before]
