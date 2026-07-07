@@ -9,7 +9,7 @@ edition = "2021"
 
 [lib]
 name = "otty_pad_studio_lib"
-crate-type = ["staticlib", "cdylib", "rlib"]
+crate-type = ["rlib"]
 
 [build-dependencies]
 tauri-build = { version = "2", features = [] }

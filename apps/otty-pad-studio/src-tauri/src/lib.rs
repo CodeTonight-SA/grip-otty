@@ -60,18 +60,31 @@ fn run_otty(args: &[&str]) -> Result<String, String> {
 }
 
 fn resolve_otty_bin() -> Result<String, String> {
-    let candidates = [
+    let mut candidates: Vec<String> = [
         std::env::var("OTTY_BIN").ok(),
         std::env::var("OTTY_BIN_DIR").ok().map(|dir| format!("{dir}/otty")),
         Some("/usr/local/bin/otty".to_string()),
         Some("/opt/homebrew/bin/otty".to_string()),
         Some("/Applications/Otty.app/Contents/MacOS/otty-cli".to_string()),
-    ];
+    ]
+    .into_iter()
+    .flatten()
+    .collect();
+    candidates.extend(path_candidates("otty"));
     candidates
         .into_iter()
-        .flatten()
         .find(|path| !path.trim().is_empty() && Path::new(path).is_file())
         .ok_or_else(|| "Otty CLI unavailable: no trusted otty binary found".to_string())
+}
+
+fn path_candidates(binary: &str) -> Vec<String> {
+    std::env::var_os("PATH")
+        .map(|paths| {
+            std::env::split_paths(&paths)
+                .map(|dir| dir.join(binary).to_string_lossy().to_string())
+                .collect()
+        })
+        .unwrap_or_default()
 }
 
 fn run_with_timeout(mut command: Command, timeout: Duration) -> Result<std::process::Output, String> {
@@ -161,7 +174,7 @@ pub fn run() {
 
 #[cfg(test)]
 mod tests {
-    use super::{looks_like_agent, send_args};
+    use super::{looks_like_agent, path_candidates, send_args};
 
     #[test]
     fn agent_detection_ignores_editor_buffers() {
@@ -192,5 +205,11 @@ mod tests {
     #[test]
     fn send_args_preserves_prompt_bytes() {
         assert_eq!(send_args("p_1", "  hello\n", false).unwrap()[6], "  hello\n");
+    }
+
+    #[test]
+    fn path_candidates_include_binary_name() {
+        let candidates = path_candidates("otty-test-bin");
+        assert!(candidates.iter().all(|candidate| candidate.ends_with("otty-test-bin")));
     }
 }
