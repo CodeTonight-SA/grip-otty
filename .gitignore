@@ -1,6 +1,11 @@
 __pycache__/
 *.pyc
+.DS_Store
 .pytest_cache/
 dist/
 *.egg-info/
 .venv/
+node_modules/
+apps/otty-pad-studio/dist/
+apps/otty-pad-studio/src-tauri/gen/
+apps/otty-pad-studio/src-tauri/target/

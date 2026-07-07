@@ -84,6 +84,20 @@ blocks ship — **an autosave of a half-typed thought never sends** (that
 property is a test). Prompt journals live in `$XDG_STATE_HOME/otty-pad`
 (default `~/.local/state/otty-pad`).
 
+## Optional GUI: Otty Pad Studio
+
+`Otty Pad Studio` is a small Tauri Markdown editor for selecting panes and
+sending prompts. It uses the same safety rules as the CLI: no blank pane ids,
+no implicit send-keys enabling, and no Otty code bundled.
+
+```bash
+cd apps/otty-pad-studio
+npm install
+npm run tauri dev
+```
+
+The GUI is source-first for now: packaged/signed binaries are future work.
+
 ## The transport API
 
 ```python
@@ -156,6 +170,8 @@ the same committed entries simply come alive.
   matters.
 - **Watch mode tracks one file per process** and reads appends only; if you
   rewrite the file's history above the watermark, restart the watcher.
+- **Otty Pad Studio requires Node/Rust/Tauri tooling** to build from source;
+  packaged binaries are future work.
 - **Not on PyPI yet** — install from git. It will be published if anyone
   besides us actually uses it (that's an honest maybe).
 
