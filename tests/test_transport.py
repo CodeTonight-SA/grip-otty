@@ -84,11 +84,17 @@ def test_inside_otty_env_markers(monkeypatch):
 def test_send_prompt_argv_exact(fake_bin):
     rec = Recorder()
     ot.send_prompt("p_19f2_1", "line one\nline two", runner=rec)
-    assert rec.calls == [[
-        FAKE_BIN, "--format", "json",
-        "pane", "send-keys", "--pane", "p_19f2_1",
-        "--bracketed-paste", "--", "line one\nline two", "key:Enter",
-    ]]
+    assert rec.calls == [
+        [
+            FAKE_BIN, "--format", "json",
+            "pane", "send-keys", "--pane", "p_19f2_1",
+            "--bracketed-paste", "--", "line one\nline two",
+        ],
+        [
+            FAKE_BIN, "--format", "json",
+            "pane", "send-keys", "--pane", "p_19f2_1", "--", "key:Enter",
+        ],
+    ]
 
 
 def test_send_prompt_no_submit_drops_enter(fake_bin):
@@ -96,6 +102,7 @@ def test_send_prompt_no_submit_drops_enter(fake_bin):
     ot.send_prompt("p_1", "draft", submit=False, runner=rec)
     assert rec.calls[0][-1] == "draft"
     assert "key:Enter" not in rec.calls[0]
+    assert len(rec.calls) == 1
 
 
 def test_send_prompt_unbracketed(fake_bin):

@@ -145,18 +145,21 @@ fn kill_process(pid: u32) {
     }
 }
 
-fn send_args<'a>(pane_id: &'a str, prompt: &'a str, submit: bool) -> Result<Vec<&'a str>, String> {
+fn paste_args<'a>(pane_id: &'a str, prompt: &'a str) -> Result<Vec<&'a str>, String> {
     if pane_id.trim().is_empty() {
         return Err("pane id is required; refusing to send to the focused pane".into());
     }
     if prompt.trim().is_empty() {
         return Err("prompt is empty; nothing was sent".into());
     }
-    let mut args = vec!["pane", "send-keys", "--pane", pane_id, "--bracketed-paste", "--", prompt];
-    if submit {
-        args.push("key:Enter");
+    Ok(vec!["pane", "send-keys", "--pane", pane_id, "--bracketed-paste", "--", prompt])
+}
+
+fn enter_args(pane_id: &str) -> Result<Vec<&str>, String> {
+    if pane_id.trim().is_empty() {
+        return Err("pane id is required; refusing to send Enter to the focused pane".into());
     }
-    Ok(args)
+    Ok(vec!["pane", "send-keys", "--pane", pane_id, "--", "key:Enter"])
 }
 
 #[tauri::command]
@@ -178,8 +181,13 @@ fn pane_list() -> Result<Vec<Pane>, String> {
 fn send_prompt(pane_id: String, prompt: String, submit: bool) -> Result<(), String> {
     ensure_send_keys_enabled()?;
     let pane_id = pane_id.trim();
-    let args = send_args(pane_id, &prompt, submit)?;
-    run_otty(&args).map(|_| ())
+    let args = paste_args(pane_id, &prompt)?;
+    run_otty(&args)?;
+    if submit {
+        let enter = enter_args(pane_id)?;
+        run_otty(&enter)?;
+    }
+    Ok(())
 }
 
 fn ensure_send_keys_enabled() -> Result<(), String> {
@@ -232,7 +240,7 @@ pub fn run() {
 
 #[cfg(test)]
 mod tests {
-    use super::{is_executable_file, looks_like_agent, path_candidates, send_args};
+    use super::{enter_args, is_executable_file, looks_like_agent, paste_args, path_candidates};
 
     #[test]
     fn agent_detection_ignores_editor_buffers() {
@@ -244,25 +252,26 @@ mod tests {
 
     #[test]
     fn send_args_refuse_empty_target_or_prompt() {
-        assert!(send_args("", "hello", true).is_err());
-        assert!(send_args("p_1", " ", true).is_err());
+        assert!(paste_args("", "hello").is_err());
+        assert!(paste_args("p_1", " ").is_err());
+        assert!(enter_args("").is_err());
     }
 
     #[test]
-    fn send_args_match_safe_otty_shape() {
+    fn send_args_match_safe_sequenced_otty_shape() {
         assert_eq!(
-            send_args("p_1", "hello", true).unwrap(),
-            vec!["pane", "send-keys", "--pane", "p_1", "--bracketed-paste", "--", "hello", "key:Enter"]
+            paste_args("p_1", "hello").unwrap(),
+            vec!["pane", "send-keys", "--pane", "p_1", "--bracketed-paste", "--", "hello"]
         );
         assert_eq!(
-            send_args("p_1", "hello", false).unwrap(),
-            vec!["pane", "send-keys", "--pane", "p_1", "--bracketed-paste", "--", "hello"]
+            enter_args("p_1").unwrap(),
+            vec!["pane", "send-keys", "--pane", "p_1", "--", "key:Enter"]
         );
     }
 
     #[test]
     fn send_args_preserves_prompt_bytes() {
-        assert_eq!(send_args("p_1", "  hello\n", false).unwrap()[6], "  hello\n");
+        assert_eq!(paste_args("p_1", "  hello\n").unwrap()[6], "  hello\n");
     }
 
     #[test]
